@@ -7,12 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/cosmos/cosmos-sdk/crypto/keys"
 	"github.com/cosmos/cosmos-sdk/tests"
 )
 
 func Test_runExportCmd(t *testing.T) {
 	runningUnattended := isRunningUnattended()
-	exportKeyCommand := exportKeyCommand()
+	exportKeyCommand := ExportKeyCommand()
 	mockIn, _, _ := tests.ApplyMockIO(exportKeyCommand)
 
 	// Now add a temporary keybase
@@ -32,7 +33,7 @@ func Test_runExportCmd(t *testing.T) {
 	if runningUnattended {
 		mockIn.Reset("testpass1\ntestpass1\n")
 	}
-	_, err = kb.CreateAccount("keyname1", tests.TestMnemonic, "", "123456789", 0, 0)
+	_, err = kb.CreateAccount("keyname1", tests.TestMnemonic, "", "123456789", "", keys.Secp256k1)
 	require.NoError(t, err)
 
 	// Now enter password

@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/cosmos/cosmos-sdk/crypto/keys"
 	"github.com/cosmos/cosmos-sdk/tests"
 )
 
@@ -18,7 +19,7 @@ func Test_runListCmd(t *testing.T) {
 		args []string
 	}
 
-	cmdBasic := listKeysCmd()
+	cmdBasic := ListKeysCmd()
 
 	// Prepare some keybases
 	kbHome1, cleanUp1 := tests.NewTestCaseDir(t)
@@ -36,7 +37,7 @@ func Test_runListCmd(t *testing.T) {
 		mockIn.Reset("testpass1\ntestpass1\n")
 	}
 
-	_, err = kb.CreateAccount("something", tests.TestMnemonic, "", "", 0, 0)
+	_, err = kb.CreateAccount("something", tests.TestMnemonic, "", "", "", keys.Secp256k1)
 	require.NoError(t, err)
 
 	defer func() {
@@ -57,7 +58,16 @@ func Test_runListCmd(t *testing.T) {
 			if runningUnattended {
 				mockIn.Reset("testpass1\ntestpass1\n")
 			}
+			viper.Set(flagListNames, false)
 			viper.Set(flags.FlagHome, tt.kbDir)
+			if err := runListCmd(tt.args.cmd, tt.args.args); (err != nil) != tt.wantErr {
+				t.Errorf("runListCmd() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if runningUnattended {
+				mockIn.Reset("testpass1\ntestpass1\n")
+			}
+			viper.Set(flagListNames, true)
 			if err := runListCmd(tt.args.cmd, tt.args.args); (err != nil) != tt.wantErr {
 				t.Errorf("runListCmd() error = %v, wantErr %v", err, tt.wantErr)
 			}

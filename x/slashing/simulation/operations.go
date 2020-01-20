@@ -5,13 +5,41 @@ import (
 	"math/rand"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/simapp/helpers"
+	simappparams "github.com/cosmos/cosmos-sdk/simapp/params"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/simulation"
 	"github.com/cosmos/cosmos-sdk/x/slashing/internal/keeper"
 	"github.com/cosmos/cosmos-sdk/x/slashing/internal/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 )
+
+// Simulation operation weights constants
+const (
+	OpWeightMsgUnjail = "op_weight_msg_unjail"
+)
+
+// WeightedOperations returns all the operations from the module with their respective weights
+func WeightedOperations(
+	appParams simulation.AppParams, cdc *codec.Codec, ak types.AccountKeeper,
+	k keeper.Keeper, sk stakingkeeper.Keeper,
+) simulation.WeightedOperations {
+
+	var weightMsgUnjail int
+	appParams.GetOrGenerate(cdc, OpWeightMsgUnjail, &weightMsgUnjail, nil,
+		func(_ *rand.Rand) {
+			weightMsgUnjail = simappparams.DefaultWeightMsgUnjail
+		},
+	)
+
+	return simulation.WeightedOperations{
+		simulation.NewWeightedOperation(
+			weightMsgUnjail,
+			SimulateMsgUnjail(ak, k, sk),
+		),
+	}
+}
 
 // SimulateMsgUnjail generates a MsgUnjail with random values
 // nolint: funlen
@@ -58,13 +86,14 @@ func SimulateMsgUnjail(ak types.AccountKeeper, k keeper.Keeper, sk stakingkeeper
 		tx := helpers.GenTx(
 			[]sdk.Msg{msg},
 			fees,
+			helpers.DefaultGenTxGas,
 			chainID,
 			[]uint64{account.GetAccountNumber()},
 			[]uint64{account.GetSequence()},
 			simAccount.PrivKey,
 		)
 
-		res := app.Deliver(tx)
+		_, res, err := app.Deliver(tx)
 
 		// result should fail if:
 		// - validator cannot be unjailed due to tombstone
@@ -73,7 +102,7 @@ func SimulateMsgUnjail(ak types.AccountKeeper, k keeper.Keeper, sk stakingkeeper
 		if info.Tombstoned ||
 			ctx.BlockHeader().Time.Before(info.JailedUntil) ||
 			validator.TokensFromShares(selfDel.GetShares()).TruncateInt().LT(validator.GetMinSelfDelegation()) {
-			if res.IsOK() {
+			if res != nil && err == nil {
 				if info.Tombstoned {
 					return simulation.NewOperationMsg(msg, true, ""), nil, errors.New("validator should not have been unjailed if validator tombstoned")
 				}
@@ -88,7 +117,7 @@ func SimulateMsgUnjail(ak types.AccountKeeper, k keeper.Keeper, sk stakingkeeper
 			return simulation.NewOperationMsg(msg, false, ""), nil, nil
 		}
 
-		if !res.IsOK() {
+		if err != nil {
 			return simulation.NoOpMsg(types.ModuleName), nil, errors.New(res.Log)
 		}
 

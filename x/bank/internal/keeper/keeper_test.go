@@ -4,11 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tendermint/tendermint/libs/common"
-
 	"github.com/stretchr/testify/require"
-
 	abci "github.com/tendermint/tendermint/abci/types"
+	tmkv "github.com/tendermint/tendermint/libs/kv"
 	tmtime "github.com/tendermint/tendermint/types/time"
 
 	"github.com/cosmos/cosmos-sdk/simapp"
@@ -17,6 +15,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/vesting"
 	keep "github.com/cosmos/cosmos-sdk/x/bank/internal/keeper"
 	"github.com/cosmos/cosmos-sdk/x/bank/internal/types"
+	"github.com/cosmos/cosmos-sdk/x/supply"
 )
 
 func TestKeeper(t *testing.T) {
@@ -64,8 +63,7 @@ func TestKeeper(t *testing.T) {
 	require.True(t, app.BankKeeper.GetCoins(ctx, addr).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 10))))
 	require.True(t, app.BankKeeper.GetCoins(ctx, addr2).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 5))))
 
-	err2 := app.BankKeeper.SendCoins(ctx, addr, addr2, sdk.NewCoins(sdk.NewInt64Coin("foocoin", 50)))
-	require.Implements(t, (*sdk.Error)(nil), err2)
+	app.BankKeeper.SendCoins(ctx, addr, addr2, sdk.NewCoins(sdk.NewInt64Coin("foocoin", 50)))
 	require.True(t, app.BankKeeper.GetCoins(ctx, addr).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 10))))
 	require.True(t, app.BankKeeper.GetCoins(ctx, addr2).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 5))))
 
@@ -97,7 +95,8 @@ func TestKeeper(t *testing.T) {
 
 	// Test retrieving black listed accounts
 	for acc := range simapp.GetMaccPerms() {
-		require.True(t, app.BankKeeper.BlacklistedAddr(app.SupplyKeeper.GetModuleAddress(acc)))
+		addr := supply.NewModuleAddress(acc)
+		require.Equal(t, app.BlacklistedAccAddrs()[addr.String()], app.BankKeeper.BlacklistedAddr(addr))
 	}
 }
 
@@ -107,7 +106,7 @@ func TestSendKeeper(t *testing.T) {
 	blacklistedAddrs := make(map[string]bool)
 
 	paramSpace := app.ParamsKeeper.Subspace("newspace")
-	sendKeeper := keep.NewBaseSendKeeper(app.AccountKeeper, paramSpace, types.DefaultCodespace, blacklistedAddrs)
+	sendKeeper := keep.NewBaseSendKeeper(app.AccountKeeper, paramSpace, blacklistedAddrs)
 	app.BankKeeper.SetSendEnabled(ctx, true)
 
 	addr := sdk.AccAddress([]byte("addr1"))
@@ -134,8 +133,7 @@ func TestSendKeeper(t *testing.T) {
 	require.True(t, sendKeeper.GetCoins(ctx, addr).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 10))))
 	require.True(t, sendKeeper.GetCoins(ctx, addr2).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 5))))
 
-	err := sendKeeper.SendCoins(ctx, addr, addr2, sdk.NewCoins(sdk.NewInt64Coin("foocoin", 50)))
-	require.Implements(t, (*sdk.Error)(nil), err)
+	sendKeeper.SendCoins(ctx, addr, addr2, sdk.NewCoins(sdk.NewInt64Coin("foocoin", 50)))
 	require.True(t, sendKeeper.GetCoins(ctx, addr).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 10))))
 	require.True(t, sendKeeper.GetCoins(ctx, addr2).IsEqual(sdk.NewCoins(sdk.NewInt64Coin("foocoin", 5))))
 
@@ -147,7 +145,7 @@ func TestSendKeeper(t *testing.T) {
 	// validate coins with invalid denoms or negative values cannot be sent
 	// NOTE: We must use the Coin literal as the constructor does not allow
 	// negative values.
-	err = sendKeeper.SendCoins(ctx, addr, addr2, sdk.Coins{sdk.Coin{Denom: "FOOCOIN", Amount: sdk.NewInt(-5)}})
+	err := sendKeeper.SendCoins(ctx, addr, addr2, sdk.Coins{sdk.Coin{Denom: "FOOCOIN", Amount: sdk.NewInt(-5)}})
 	require.Error(t, err)
 }
 
@@ -168,21 +166,21 @@ func TestMsgSendEvents(t *testing.T) {
 	require.Equal(t, 2, len(events))
 	event1 := sdk.Event{
 		Type:       types.EventTypeTransfer,
-		Attributes: []common.KVPair{},
+		Attributes: []tmkv.Pair{},
 	}
 	event1.Attributes = append(
 		event1.Attributes,
-		common.KVPair{Key: []byte(types.AttributeKeyRecipient), Value: []byte(addr2.String())})
+		tmkv.Pair{Key: []byte(types.AttributeKeyRecipient), Value: []byte(addr2.String())})
 	event1.Attributes = append(
 		event1.Attributes,
-		common.KVPair{Key: []byte(sdk.AttributeKeyAmount), Value: []byte(newCoins.String())})
+		tmkv.Pair{Key: []byte(sdk.AttributeKeyAmount), Value: []byte(newCoins.String())})
 	event2 := sdk.Event{
 		Type:       sdk.EventTypeMessage,
-		Attributes: []common.KVPair{},
+		Attributes: []tmkv.Pair{},
 	}
 	event2.Attributes = append(
 		event2.Attributes,
-		common.KVPair{Key: []byte(types.AttributeKeySender), Value: []byte(addr.String())})
+		tmkv.Pair{Key: []byte(types.AttributeKeySender), Value: []byte(addr.String())})
 	require.Equal(t, event1, events[0])
 	require.Equal(t, event2, events[1])
 
@@ -200,7 +198,7 @@ func TestViewKeeper(t *testing.T) {
 	app, ctx := createTestApp(false)
 
 	//paramSpace := app.ParamsKeeper.Subspace(types.DefaultParamspace)
-	viewKeeper := keep.NewBaseViewKeeper(app.AccountKeeper, types.DefaultCodespace)
+	viewKeeper := keep.NewBaseViewKeeper(app.AccountKeeper)
 
 	addr := sdk.AccAddress([]byte("addr1"))
 	acc := app.AccountKeeper.NewAccountWithAddress(ctx, addr)
@@ -240,7 +238,7 @@ func TestVestingAccountSend(t *testing.T) {
 	require.Error(t, err)
 
 	// receive some coins
-	vacc.SetCoins(origCoins.Add(sendCoins))
+	vacc.SetCoins(origCoins.Add(sendCoins...))
 	app.AccountKeeper.SetAccount(ctx, vacc)
 
 	// require that all vested coins are spendable plus any received
@@ -275,7 +273,7 @@ func TestPeriodicVestingAccountSend(t *testing.T) {
 	require.Error(t, err)
 
 	// receive some coins
-	vacc.SetCoins(origCoins.Add(sendCoins))
+	vacc.SetCoins(origCoins.Add(sendCoins...))
 	app.AccountKeeper.SetAccount(ctx, vacc)
 
 	// require that all vested coins are spendable plus any received
@@ -311,7 +309,7 @@ func TestVestingAccountReceive(t *testing.T) {
 
 	// require the coins are spendable
 	vacc = app.AccountKeeper.GetAccount(ctx, addr1).(*vesting.ContinuousVestingAccount)
-	require.Equal(t, origCoins.Add(sendCoins), vacc.GetCoins())
+	require.Equal(t, origCoins.Add(sendCoins...), vacc.GetCoins())
 	require.Equal(t, vacc.SpendableCoins(now), sendCoins)
 
 	// require coins are spendable plus any that have vested
@@ -347,7 +345,7 @@ func TestPeriodicVestingAccountReceive(t *testing.T) {
 
 	// require the coins are spendable
 	vacc = app.AccountKeeper.GetAccount(ctx, addr1).(*vesting.PeriodicVestingAccount)
-	require.Equal(t, origCoins.Add(sendCoins), vacc.GetCoins())
+	require.Equal(t, origCoins.Add(sendCoins...), vacc.GetCoins())
 	require.Equal(t, vacc.SpendableCoins(now), sendCoins)
 
 	// require coins are spendable plus any that have vested
